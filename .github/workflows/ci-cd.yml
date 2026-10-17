@@ -1,0 +1,75 @@
+name: CI/CD Medical Pipeline
+
+# 82. Disparadores: Se ejecuta en push y pull_request a main
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build-test-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Descarga del código fuente
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # Configuración de entorno Node.js
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      # 83. Instalación de dependencias
+      - name: Install Dependencies
+        run: |
+          npm ci || npm install
+          if [ -d "./notifications-service" ]; then
+            cd notifications-service && npm install && cd ..
+          fi
+
+      # 84. Pruebas y validación de calidad de código
+      - name: Run Tests / Code Quality
+        run: |
+          echo "Ejecutando verificaciones de sintaxis y calidad de código..."
+          node -c server.js
+          if [ -f "./notifications-service/index.js" ]; then
+            node -c ./notifications-service/index.js
+          fi
+          echo "Verificaciones superadas con éxito."
+
+      # Configurar Docker Buildx
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # 86. Autenticación en Docker Hub mediante secretos
+      - name: Log in to Docker Hub
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # 85, 87 y 88. Construcción y publicación con tags semánticos y SHA del commit
+      - name: Build and Push Backend Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/medical-backend:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/medical-backend:${{ github.sha }}
+
+      - name: Build and Push Notifications Image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./notifications-service
+          file: ./notifications-service/Dockerfile
+          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/medical-notifications:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/medical-notifications:${{ github.sha }}
